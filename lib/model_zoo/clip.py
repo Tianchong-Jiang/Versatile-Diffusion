@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 from functools import partial
-from lib.model_zoo.common.get_model import register
+from versatile_diffusion.lib.model_zoo.common.get_model import register
 import torch.nn.functional as F
 
 symbol = 'clip'
@@ -29,9 +29,9 @@ from transformers import CLIPModel
 
 @register('clip_text_context_encoder')
 class CLIPTextContextEncoder(AbstractEncoder):
-    def __init__(self, 
-                 version="openai/clip-vit-large-patch14", 
-                 max_length=77, 
+    def __init__(self,
+                 version="openai/clip-vit-large-patch14",
+                 max_length=77,
                  fp16=False, ):
         super().__init__()
         self.tokenizer = CLIPTokenizer.from_pretrained(version)
@@ -49,7 +49,7 @@ class CLIPTextContextEncoder(AbstractEncoder):
         self.train = disabled_train
         for param in self.parameters():
             param.requires_grad = False
-        
+
     def encode(self, text):
         batch_encoding = self.tokenizer(
             text, truncation=True, max_length=self.max_length, return_length=True,
@@ -59,14 +59,15 @@ class CLIPTextContextEncoder(AbstractEncoder):
         z = self.model.text_projection(outputs.last_hidden_state)
         z_pooled = self.model.text_projection(outputs.pooler_output)
         z = z / torch.norm(z_pooled.unsqueeze(1), dim=-1, keepdim=True)
+        # import pdb; pdb.set_trace()
         return z
 
 from transformers import CLIPProcessor
 
 @register('clip_image_context_encoder')
 class CLIPImageContextEncoder(AbstractEncoder):
-    def __init__(self, 
-                 version="openai/clip-vit-large-patch14", 
+    def __init__(self,
+                 version="openai/clip-vit-large-patch14",
                  fp16=False, ):
         super().__init__()
         self.tokenizer = CLIPTokenizer.from_pretrained(version)

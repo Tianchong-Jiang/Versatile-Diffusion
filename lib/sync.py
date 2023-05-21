@@ -12,7 +12,7 @@ import time
 import copy
 import torch
 import torch.distributed as dist
-from lib.cfg_holder import cfg_unique_holder as cfguh
+from versatile_diffusion.lib.cfg_holder import cfg_unique_holder as cfguh
 
 def singleton(class_):
     instances = {}
@@ -89,7 +89,7 @@ class barrier_lock(object):
                 pass
             for i in range(self.n):
                 lock_shm.buf[i] = 0
-            return 
+            return
         else:
             while lock_shm.buf[k] != 0:
                 pass

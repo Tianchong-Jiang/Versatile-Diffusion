@@ -20,8 +20,8 @@ import PIL.Image
 import gradio
 from gradio import components, processing_utils, routes, utils
 from gradio.context import Context
-from gradio.documentation import document, set_documentation_group
-from gradio.flagging import CSVLogger
+# from gradio.documentation import document, set_documentation_group
+# from gradio.flagging import CSVLogger
 
 if TYPE_CHECKING:  # Only import for type checking (to avoid circular imports).
     from gradio.components import IOComponent

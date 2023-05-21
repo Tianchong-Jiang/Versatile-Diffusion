@@ -22,17 +22,19 @@ import numpy.random as npr
 from contextlib import nullcontext
 import types
 
+import pdb
+
 import torch
 import torchvision.transforms as tvtrans
-from lib.cfg_helper import model_cfg_bank
-from lib.model_zoo import get_model
-from cusomized_gradio_blocks import create_myexamples, customized_as_example, customized_postprocess
+from versatile_diffusion.lib.cfg_helper import model_cfg_bank
+from versatile_diffusion.lib.model_zoo import get_model
+from versatile_diffusion.cusomized_gradio_blocks import create_myexamples, customized_as_example, customized_postprocess
 
 n_sample_image = 2
 n_sample_text = 4
 cache_examples = True
 
-from lib.model_zoo.ddim import DDIMSampler
+from versatile_diffusion.lib.model_zoo.ddim import DDIMSampler
 
 ##########
 # helper #
@@ -71,7 +73,7 @@ class adjust_rank(object):
         x0 = 0
         x1, y1 = self.max_semantic_drop_rank+1, 1
         self.x2y_semf = x2y_semf_wrapper(x0, x1, y1)
-        
+
         def t2y0_styf_wrapper(t0, y00, t1, y01):
             return lambda t: (np.exp((t-0.5)*2)-t0)/(t1-t0)*(y01-y00)+y00
         t0, y00 = np.exp((1  -0.5)*2), -(q-self.max_style_drop_rank)
@@ -238,7 +240,7 @@ class vd_dummy(object):
     def inference_t2t(self, *args, **kwarg): pass
     def inference_dcg(self, *args, **kwarg): pass
     def inference_tcg(self, *args, **kwarg): pass
-    def inference_mcg(self, *args, **kwarg): 
+    def inference_mcg(self, *args, **kwarg):
         return None, None
 
 class vd_inference(object):
@@ -264,7 +266,10 @@ class vd_inference(object):
 
         if self.which == 'v1.0':
             if fp16:
-                sd = torch.load('pretrained/vd-four-flow-v1-0-fp16.pth', map_location='cpu')
+                sd = torch.load('/root/.cache/huggingface/hub/models'\
+                                '--shi-labs--versatile-diffusion/snapshots/'\
+                                '2926f8e11ea526b562cd592b099fcf9c2985d0b7/pretrained_pth/'\
+                                'vd-four-flow-v1-0-fp16.pth', map_location='cpu')
             else:
                 sd = torch.load('pretrained/vd-four-flow-v1-0.pth', map_location='cpu')
             # from huggingface_hub import hf_hub_download
@@ -297,6 +302,59 @@ class vd_inference(object):
             self.scale_imgto = 7.5
             self.disentanglement_noglobal = True
 
+    def inference_i2l(self, im, seed):
+        # n_samples = self.n_sample_text
+        n_samples = 77
+        scale = self.scale_imgto
+        sampler = self.sampler
+        h, w = self.output_dim
+        device = self.net.device
+
+        BICUBIC = PIL.Image.Resampling.BICUBIC
+        im = im.resize([w, h], resample=BICUBIC)
+
+        cx = tvtrans.ToTensor()(im)[None].to(device)
+        c = self.net.ctx_encode(cx, which='image').repeat(n_samples, 1, 1)
+        u = self.net.ctx_encode(torch.zeros_like(cx), which='image').repeat(n_samples, 1, 1)
+
+        shape = [n_samples, self.text_latent_dim]
+        np.random.seed(seed)
+        torch.manual_seed(seed + 100)
+        latent_code, _ = sampler.sample(
+            steps=self.ddim_steps,
+            x_info={'type':'text',},
+            c_info={'type':'image', 'conditioning':c, 'unconditional_conditioning':u,
+                    'unconditional_guidance_scale':scale},
+            shape=shape,
+            verbose=False,
+            eta=self.ddim_eta)
+        tx = self.net.vae_decode(latent_code, which='text', temperature=self.text_temperature)
+        tx = [remove_duplicate_word(txi) for txi in tx]
+        tx_combined = '\n'.join(tx)
+        return tx_combined, latent_code
+
+    def inference_l2i(self, latent_code, seed):
+        n_samples = self.n_sample_image
+        scale = self.scale_textto
+        sampler = self.sampler
+        h, w = self.output_dim
+        u = self.net.ctx_encode([""], which='text').repeat(n_samples, 1, 1)
+        latent_code = latent_code.repeat(n_samples, 1, 1)
+        shape = [n_samples, self.image_latent_dim, h//8, w//8]
+        np.random.seed(seed)
+        torch.manual_seed(seed + 100)
+        x, _ = sampler.sample(
+            steps=self.ddim_steps,
+            x_info={'type':'image'},
+            c_info={'type':'text', 'conditioning': latent_code, 'unconditional_conditioning':u,
+                    'unconditional_guidance_scale':scale},
+            shape=shape,
+            verbose=False,
+            eta=self.ddim_eta)
+        im = self.net.vae_decode(x, which='image')
+        im = [tvtrans.ToPILImage()(i) for i in im]
+        return im
+
     def inference_t2i(self, text, seed):
         n_samples = self.n_sample_image
         scale = self.scale_textto
@@ -304,13 +362,14 @@ class vd_inference(object):
         h, w = self.output_dim
         u = self.net.ctx_encode([""], which='text').repeat(n_samples, 1, 1)
         c = self.net.ctx_encode([text], which='text').repeat(n_samples, 1, 1)
+        pdb.set_trace()
         shape = [n_samples, self.image_latent_dim, h//8, w//8]
         np.random.seed(seed)
         torch.manual_seed(seed + 100)
         x, _ = sampler.sample(
             steps=self.ddim_steps,
             x_info={'type':'image'},
-            c_info={'type':'text', 'conditioning':c, 'unconditional_conditioning':u, 
+            c_info={'type':'text', 'conditioning':c, 'unconditional_conditioning':u,
                     'unconditional_guidance_scale':scale},
             shape=shape,
             verbose=False,
@@ -353,7 +412,7 @@ class vd_inference(object):
             x, _ = sampler.sample(
                 steps=self.ddim_steps,
                 x_info={'type':'image', 'x0':x0, 'x0_forward_timesteps':step},
-                c_info={'type':'image', 'conditioning':c, 'unconditional_conditioning':u, 
+                c_info={'type':'image', 'conditioning':c, 'unconditional_conditioning':u,
                         'unconditional_guidance_scale':scale},
                 shape=shape,
                 verbose=False,
@@ -362,7 +421,7 @@ class vd_inference(object):
             x, _ = sampler.sample(
                 steps=self.ddim_steps,
                 x_info={'type':'image',},
-                c_info={'type':'image', 'conditioning':c, 'unconditional_conditioning':u, 
+                c_info={'type':'image', 'conditioning':c, 'unconditional_conditioning':u,
                         'unconditional_guidance_scale':scale},
                 shape=shape,
                 verbose=False,
@@ -401,11 +460,12 @@ class vd_inference(object):
         x, _ = sampler.sample(
             steps=self.ddim_steps,
             x_info={'type':'text',},
-            c_info={'type':'image', 'conditioning':c, 'unconditional_conditioning':u, 
+            c_info={'type':'image', 'conditioning':c, 'unconditional_conditioning':u,
                     'unconditional_guidance_scale':scale},
             shape=shape,
             verbose=False,
             eta=self.ddim_eta)
+        pdb.set_trace()
         tx = self.net.vae_decode(x, which='text', temperature=self.text_temperature)
         tx = [remove_duplicate_word(txi) for txi in tx]
         tx_combined = '\n'.join(tx)
@@ -423,7 +483,7 @@ class vd_inference(object):
         x, _ = sampler.sample(
             steps=self.ddim_steps,
             x_info={'type':'text',},
-            c_info={'type':'text', 'conditioning':c, 'unconditional_conditioning':u, 
+            c_info={'type':'text', 'conditioning':c, 'unconditional_conditioning':u,
                     'unconditional_guidance_scale':scale},
             shape=shape,
             verbose=False,
@@ -447,8 +507,8 @@ class vd_inference(object):
             scale = self.scale_imgto*(1-textstrength) + self.scale_textto*textstrength
 
             c_info_list.append({
-                'type':'text', 
-                'conditioning':ct, 
+                'type':'text',
+                'conditioning':ct,
                 'unconditional_conditioning':ut,
                 'unconditional_guidance_scale':scale,
                 'ratio': textstrength, })
@@ -470,8 +530,8 @@ class vd_inference(object):
             ci = self.adjust_rank_f(ci, fcs_lvl).repeat(n_samples, 1, 1)
 
         c_info_list.append({
-            'type':'image', 
-            'conditioning':ci, 
+            'type':'image',
+            'conditioning':ci,
             'unconditional_conditioning':torch.zeros_like(ci),
             'unconditional_guidance_scale':scale,
             'ratio': (1-textstrength), })
@@ -514,8 +574,8 @@ class vd_inference(object):
             scale = self.scale_imgto*(1-textstrength) + self.scale_textto*textstrength
 
             c_info_list.append({
-                'type':'text', 
-                'conditioning':ct, 
+                'type':'text',
+                'conditioning':ct,
                 'unconditional_conditioning':ut,
                 'unconditional_guidance_scale':scale,
                 'ratio': textstrength, })
@@ -557,8 +617,8 @@ class vd_inference(object):
 
         cis = torch.cat(imc, dim=1)
         c_info_list.append({
-            'type':'image', 
-            'conditioning':cis, 
+            'type':'image',
+            'conditioning':cis,
             'unconditional_conditioning':torch.zeros_like(cis),
             'unconditional_guidance_scale':scale,
             'ratio': (1-textstrength), })
@@ -578,537 +638,541 @@ class vd_inference(object):
         imout = [tvtrans.ToPILImage()(i) for i in imout]
         return input_save, imout
 
-# vd_inference = vd_dummy()
-vd_inference = vd_inference(which='v1.0', fp16=True)
+if __name__ == '__main__':
 
-#################
-# sub interface #
-#################
 
-def t2i_interface(with_example=False):
-    gr.HTML('<p id=myinst>&nbsp Description: ' + get_instruction("Text-to-Image") + '</p>')
-    with gr.Row():
-        with gr.Column():
-            text = gr.Textbox(lines=4, placeholder="Input prompt...", label='Text Input')
-            seed = gr.Number(20, label="Seed", precision=0)
-            button = gr.Button("Run")
-        with gr.Column():
-            img_output = gr.Gallery(label="Image Result", elem_id='customized_imbox').style(grid=n_sample_image)
+    # vd_inference = vd_dummy()
+    vd_inference = vd_inference(which='v1.0', fp16=True)
 
-    button.click(
-        vd_inference.inference_t2i,
-        inputs=[text, seed],
-        outputs=[img_output])
+    #################
+    # sub interface #
+    #################
 
-    if with_example:
-        gr.Examples(
-            label='Examples',
-            examples=get_example('Text-to-Image'),
-            fn=vd_inference.inference_t2i,
+    def t2i_interface(with_example=False):
+        gr.HTML('<p id=myinst>&nbsp Description: ' + get_instruction("Text-to-Image") + '</p>')
+        with gr.Row():
+            with gr.Column():
+                text = gr.Textbox(lines=4, placeholder="Input prompt...", label='Text Input')
+                seed = gr.Number(20, label="Seed", precision=0)
+                button = gr.Button("Run")
+            with gr.Column():
+                img_output = gr.Gallery(label="Image Result", elem_id='customized_imbox').style(grid=n_sample_image)
+
+        button.click(
+            vd_inference.inference_t2i,
             inputs=[text, seed],
-            outputs=[img_output],
-            cache_examples=cache_examples),
+            outputs=[img_output])
 
-def i2i_interface(with_example=False):
-    gr.HTML('<p id=myinst>&nbsp Description: ' + get_instruction("Image-Variation") + '</p>')
-    with gr.Row():
-        with gr.Column():
-            img_input = gr.Image(label='Image Input', type='pil', elem_id='customized_imbox')
-            sim_flag  = gr.Checkbox(label='Show Detail Controls')
-            with gr.Row():
-                fid_lvl = gr.Slider(label="Fidelity (Dislike -- Same)", minimum=0, maximum=1, value=0, step=0.02, visible=False)
-                fcs_lvl = gr.Slider(label="Focus (Semantic -- Style)", minimum=0, maximum=1, value=0.5, step=0.02, visible=False)
-            clr_adj = gr.Radio(label="Color Adjustment", choices=["None", "Simple"], value='Simple', visible=False)
-            explain = gr.HTML('<p id=myinst>&nbsp Fidelity: How likely the output image looks like the referece image (0-dislike (default), 1-same).</p>'+
-                              '<p id=myinst>&nbsp Focus: What the output image should focused on (0-semantic, 0.5-balanced (default), 1-style).</p>', 
-                              visible=False)
-            seed = gr.Number(20, label="Seed", precision=0)
-            button = gr.Button("Run")
-        with gr.Column():
-            img_output = gr.Gallery(label="Image Result", elem_id='customized_imbox').style(grid=n_sample_image)
+        if with_example:
+            gr.Examples(
+                label='Examples',
+                examples=get_example('Text-to-Image'),
+                fn=vd_inference.inference_t2i,
+                inputs=[text, seed],
+                outputs=[img_output],
+                cache_examples=cache_examples),
 
-        sim_flag.change(
-            fn=lambda x: {
-                explain : gr.update(visible=x), 
-                fid_lvl : gr.update(visible=x), 
-                fcs_lvl : gr.update(visible=x), 
-                clr_adj : gr.update(visible=x), },
-            inputs=sim_flag,
-            outputs=[explain, fid_lvl, fcs_lvl, clr_adj, seed],)
+    def i2i_interface(with_example=False):
+        gr.HTML('<p id=myinst>&nbsp Description: ' + get_instruction("Image-Variation") + '</p>')
+        with gr.Row():
+            with gr.Column():
+                img_input = gr.Image(label='Image Input', type='pil', elem_id='customized_imbox')
+                sim_flag  = gr.Checkbox(label='Show Detail Controls')
+                with gr.Row():
+                    fid_lvl = gr.Slider(label="Fidelity (Dislike -- Same)", minimum=0, maximum=1, value=0, step=0.02, visible=False)
+                    fcs_lvl = gr.Slider(label="Focus (Semantic -- Style)", minimum=0, maximum=1, value=0.5, step=0.02, visible=False)
+                clr_adj = gr.Radio(label="Color Adjustment", choices=["None", "Simple"], value='Simple', visible=False)
+                explain = gr.HTML('<p id=myinst>&nbsp Fidelity: How likely the output image looks like the referece image (0-dislike (default), 1-same).</p>'+
+                                '<p id=myinst>&nbsp Focus: What the output image should focused on (0-semantic, 0.5-balanced (default), 1-style).</p>',
+                                visible=False)
+                seed = gr.Number(20, label="Seed", precision=0)
+                button = gr.Button("Run")
+            with gr.Column():
+                img_output = gr.Gallery(label="Image Result", elem_id='customized_imbox').style(grid=n_sample_image)
 
-    button.click(
-        vd_inference.inference_i2i,
-        inputs=[img_input, fid_lvl, fcs_lvl, clr_adj, seed],
-        outputs=[img_output])
+            sim_flag.change(
+                fn=lambda x: {
+                    explain : gr.update(visible=x),
+                    fid_lvl : gr.update(visible=x),
+                    fcs_lvl : gr.update(visible=x),
+                    clr_adj : gr.update(visible=x), },
+                inputs=sim_flag,
+                outputs=[explain, fid_lvl, fcs_lvl, clr_adj, seed],)
 
-    if with_example:
-        gr.Examples(
-            label='Examples',
-            examples=get_example('Image-Variation'),
-            fn=vd_inference.inference_i2i,
+        button.click(
+            vd_inference.inference_i2i,
             inputs=[img_input, fid_lvl, fcs_lvl, clr_adj, seed],
-            outputs=[img_output],
-            cache_examples=cache_examples),
+            outputs=[img_output])
 
-def i2t_interface(with_example=False):
-    gr.HTML('<p id=myinst>&nbsp Description: ' + get_instruction("Image-to-Text") + '</p>')
-    with gr.Row():
-        with gr.Column():
-            img_input = gr.Image(label='Image Input', type='pil', elem_id='customized_imbox')
-            seed = gr.Number(20, label="Seed", precision=0)
-            button = gr.Button("Run")
-        with gr.Column():
-            txt_output = gr.Textbox(lines=4, label='Text Result')
+        if with_example:
+            gr.Examples(
+                label='Examples',
+                examples=get_example('Image-Variation'),
+                fn=vd_inference.inference_i2i,
+                inputs=[img_input, fid_lvl, fcs_lvl, clr_adj, seed],
+                outputs=[img_output],
+                cache_examples=cache_examples),
 
-    button.click(
-        vd_inference.inference_i2t,
-        inputs=[img_input, seed],
-        outputs=[txt_output])
+    def i2t_interface(with_example=False):
+        gr.HTML('<p id=myinst>&nbsp Description: ' + get_instruction("Image-to-Text") + '</p>')
+        with gr.Row():
+            with gr.Column():
+                img_input = gr.Image(label='Image Input', type='pil', elem_id='customized_imbox')
+                seed = gr.Number(20, label="Seed", precision=0)
+                button = gr.Button("Run")
+            with gr.Column():
+                txt_output = gr.Textbox(lines=4, label='Text Result')
 
-    if with_example:
-        gr.Examples(
-            label='Examples',
-            examples=get_example('Image-to-Text'),
-            fn=vd_inference.inference_i2t,
+        button.click(
+            vd_inference.inference_i2t,
             inputs=[img_input, seed],
-            outputs=[txt_output],
-            cache_examples=cache_examples),
+            outputs=[txt_output])
 
-def t2t_interface(with_example=False):
-    gr.HTML('<p id=myinst>&nbsp Description: ' + get_instruction("Text-Variation") + '</p>')
-    with gr.Row():
-        with gr.Column():
-            text = gr.Textbox(lines=4, placeholder="Input prompt...", label='Text Input')
-            seed = gr.Number(20, label="Seed", precision=0)
-            button = gr.Button("Run")
-        with gr.Column():
-            txt_output = gr.Textbox(lines=4, label='Text Result')
+        if with_example:
+            gr.Examples(
+                label='Examples',
+                examples=get_example('Image-to-Text'),
+                fn=vd_inference.inference_i2t,
+                inputs=[img_input, seed],
+                outputs=[txt_output],
+                cache_examples=cache_examples),
 
-    button.click(
-        vd_inference.inference_t2t,
-        inputs=[text, seed],
-        outputs=[txt_output])
+    def t2t_interface(with_example=False):
+        gr.HTML('<p id=myinst>&nbsp Description: ' + get_instruction("Text-Variation") + '</p>')
+        with gr.Row():
+            with gr.Column():
+                text = gr.Textbox(lines=4, placeholder="Input prompt...", label='Text Input')
+                seed = gr.Number(20, label="Seed", precision=0)
+                button = gr.Button("Run")
+            with gr.Column():
+                txt_output = gr.Textbox(lines=4, label='Text Result')
 
-    if with_example:
-        gr.Examples(
-            label='Examples',
-            examples=get_example('Text-Variation'),
-            fn=vd_inference.inference_t2t,
+        button.click(
+            vd_inference.inference_t2t,
             inputs=[text, seed],
-            outputs=[txt_output],
-            cache_examples=cache_examples, )
+            outputs=[txt_output])
 
-class image_mimage_swap(object):
-    def __init__(self, block0, block1):
-        self.block0 = block0
-        self.block1 = block1
-        self.which_update = 'both'
+        if with_example:
+            gr.Examples(
+                label='Examples',
+                examples=get_example('Text-Variation'),
+                fn=vd_inference.inference_t2t,
+                inputs=[text, seed],
+                outputs=[txt_output],
+                cache_examples=cache_examples, )
 
-    def __call__(self, x0, x1, flag):
-        if self.which_update == 'both':
-            return self.update_both(x0, x1, flag)
-        elif self.which_update == 'visible':
-            return self.update_visible(x0, x1, flag)
-        elif self.which_update == 'visible_oneoff':
-            return self.update_visible_oneoff(x0, x1, flag)
-        else:
-            assert False
+    class image_mimage_swap(object):
+        def __init__(self, block0, block1):
+            self.block0 = block0
+            self.block1 = block1
+            self.which_update = 'both'
 
-    def update_both(self, x0, x1, flag):
-        if flag:
-            ug0 = gr.update(visible=False)
-            if x0 is None:
-                ug1 = gr.update(value=None, visible=True)
+        def __call__(self, x0, x1, flag):
+            if self.which_update == 'both':
+                return self.update_both(x0, x1, flag)
+            elif self.which_update == 'visible':
+                return self.update_visible(x0, x1, flag)
+            elif self.which_update == 'visible_oneoff':
+                return self.update_visible_oneoff(x0, x1, flag)
             else:
-                if (x1 is not None) and ('mask' in x1):
-                    value1 = {'image':x0, 'mask':x1['mask']}
+                assert False
+
+        def update_both(self, x0, x1, flag):
+            if flag:
+                ug0 = gr.update(visible=False)
+                if x0 is None:
+                    ug1 = gr.update(value=None, visible=True)
                 else:
-                    value1 = {'image':x0, 'mask':None}
-                ug1 = gr.update(value=value1, visible=True)
-        else:
-            if (x1 is not None) and ('image' in x1):
-                value0 = x1['image']
+                    if (x1 is not None) and ('mask' in x1):
+                        value1 = {'image':x0, 'mask':x1['mask']}
+                    else:
+                        value1 = {'image':x0, 'mask':None}
+                    ug1 = gr.update(value=value1, visible=True)
             else:
-                value0 = None
-            ug0 = gr.update(value=value0, visible=True)
-            ug1 = gr.update(visible=False)
-        return {
-            self.block0 : ug0,
-            self.block1 : ug1,}
+                if (x1 is not None) and ('image' in x1):
+                    value0 = x1['image']
+                else:
+                    value0 = None
+                ug0 = gr.update(value=value0, visible=True)
+                ug1 = gr.update(visible=False)
+            return {
+                self.block0 : ug0,
+                self.block1 : ug1,}
 
-    def update_visible(self, x0, x1, flag):
-        return {
-            self.block0 : gr.update(visible=not flag),
-            self.block1 : gr.update(visible=flag), }
+        def update_visible(self, x0, x1, flag):
+            return {
+                self.block0 : gr.update(visible=not flag),
+                self.block1 : gr.update(visible=flag), }
 
-    def update_visible_oneoff(self, x0, x1, flag):
-        self.which_update = 'both'
-        return {
-            self.block0 : gr.update(visible=not flag),
-            self.block1 : gr.update(visible=flag), }
+        def update_visible_oneoff(self, x0, x1, flag):
+            self.which_update = 'both'
+            return {
+                self.block0 : gr.update(visible=not flag),
+                self.block1 : gr.update(visible=flag), }
 
-class example_visible_only_hack(object):
-    def __init__(self, checkbox_list, functor_list):
-        self.checkbox_list = checkbox_list
-        self.functor_list = functor_list
+    class example_visible_only_hack(object):
+        def __init__(self, checkbox_list, functor_list):
+            self.checkbox_list = checkbox_list
+            self.functor_list = functor_list
 
-    def __call__(self, *args):
-        for bi, fi, vi in zip(self.checkbox_list, self.functor_list, args):
-            if bi.value != vi:
-                fi.which_update = 'visible_oneoff'
+        def __call__(self, *args):
+            for bi, fi, vi in zip(self.checkbox_list, self.functor_list, args):
+                if bi.value != vi:
+                    fi.which_update = 'visible_oneoff'
 
-def dcg_interface(with_example=False):
-    gr.HTML('<p id=myinst>&nbsp Description: ' + get_instruction("Dual-Context") + '</p>')
-    with gr.Row():
-        input_session = []
-        with gr.Column():
-            img = gr.Image(label='Image Input', type='pil', elem_id='customized_imbox')
-            fcs = gr.Slider(label="Focus (Semantic -- Style)", minimum=0, maximum=1, value=0.5, step=0.02)
-            gr.HTML('<p id=myinst>&nbsp Focus: Focus on what aspect of the image? (0-semantic, 0.5-balanced (default), 1-style).</p>')
+    def dcg_interface(with_example=False):
+        gr.HTML('<p id=myinst>&nbsp Description: ' + get_instruction("Dual-Context") + '</p>')
+        with gr.Row():
+            input_session = []
+            with gr.Column():
+                img = gr.Image(label='Image Input', type='pil', elem_id='customized_imbox')
+                fcs = gr.Slider(label="Focus (Semantic -- Style)", minimum=0, maximum=1, value=0.5, step=0.02)
+                gr.HTML('<p id=myinst>&nbsp Focus: Focus on what aspect of the image? (0-semantic, 0.5-balanced (default), 1-style).</p>')
 
-            text = gr.Textbox(lines=2, placeholder="Input prompt...", label='Text Input')
-            tstrength = gr.Slider(label="Text Domination (NoEffect -- TextOnly)", minimum=0, maximum=1, value=0, step=0.02)
+                text = gr.Textbox(lines=2, placeholder="Input prompt...", label='Text Input')
+                tstrength = gr.Slider(label="Text Domination (NoEffect -- TextOnly)", minimum=0, maximum=1, value=0, step=0.02)
 
-            seed = gr.Number(20, label="Seed", precision=0)
-            button = gr.Button("Run")
+                seed = gr.Number(20, label="Seed", precision=0)
+                button = gr.Button("Run")
 
-        with gr.Column():
-            output_gallary = gr.Gallery(label="Image Result", elem_id='customized_imbox').style(grid=n_sample_image)
+            with gr.Column():
+                output_gallary = gr.Gallery(label="Image Result", elem_id='customized_imbox').style(grid=n_sample_image)
 
-    input_list = []
-    for i in input_session:
-        input_list += i
-    button.click(
-        vd_inference.inference_dcg, 
-        inputs=[img, fcs, text, tstrength, seed],
-        outputs=[output_gallary])
-
-    if with_example:
-        gr.Examples(
-            label='Examples',
-            examples=get_example('Dual-Context'),
-            fn=vd_inference.inference_dcg,
+        input_list = []
+        for i in input_session:
+            input_list += i
+        button.click(
+            vd_inference.inference_dcg,
             inputs=[img, fcs, text, tstrength, seed],
-            outputs=[output_gallary],
-            cache_examples=cache_examples)
+            outputs=[output_gallary])
 
-def tcg_interface(with_example=False):
-    gr.HTML('<p id=myinst>&nbsp Description: ' + get_instruction("Triple-Context") + '</p>')
-    with gr.Row():
-        input_session = []
-        with gr.Column(min_width=940):
-            with gr.Row():
-                with gr.Column():
-                    img0  = gr.Image(label='Image Input', type='pil', elem_id='customized_imbox')
-                    img0.as_example = types.MethodType(customized_as_example, img0)
-                    imgm0 = gr.Image(label='Image Input with Mask', type='pil', elem_id='customized_imbox', tool='sketch', source="upload", visible=False)
-                    imgm0.postprocess = types.MethodType(customized_postprocess, imgm0)
-                    imgm0.as_example = types.MethodType(customized_as_example, imgm0)
-                    istrength0 = gr.Slider(label="Weight", minimum=0, maximum=1, value=1, step=0.02)
-                    fcs0 = gr.Slider(label="Focus (Semantic -- Style)", minimum=0, maximum=1, value=0.5, step=0.02)
-                    msk0 = gr.Checkbox(label='Use mask?')
-                    swapf0 = image_mimage_swap(img0, imgm0)
+        if with_example:
+            gr.Examples(
+                label='Examples',
+                examples=get_example('Dual-Context'),
+                fn=vd_inference.inference_dcg,
+                inputs=[img, fcs, text, tstrength, seed],
+                outputs=[output_gallary],
+                cache_examples=cache_examples)
 
-                    msk0.change(
-                        fn=swapf0,
-                        inputs=[img0, imgm0, msk0],
-                        outputs=[img0, imgm0],)
-                    input_session.append([img0, imgm0, istrength0, fcs0, msk0])
+    def tcg_interface(with_example=False):
+        gr.HTML('<p id=myinst>&nbsp Description: ' + get_instruction("Triple-Context") + '</p>')
+        with gr.Row():
+            input_session = []
+            with gr.Column(min_width=940):
+                with gr.Row():
+                    with gr.Column():
+                        img0  = gr.Image(label='Image Input', type='pil', elem_id='customized_imbox')
+                        img0.as_example = types.MethodType(customized_as_example, img0)
+                        imgm0 = gr.Image(label='Image Input with Mask', type='pil', elem_id='customized_imbox', tool='sketch', source="upload", visible=False)
+                        imgm0.postprocess = types.MethodType(customized_postprocess, imgm0)
+                        imgm0.as_example = types.MethodType(customized_as_example, imgm0)
+                        istrength0 = gr.Slider(label="Weight", minimum=0, maximum=1, value=1, step=0.02)
+                        fcs0 = gr.Slider(label="Focus (Semantic -- Style)", minimum=0, maximum=1, value=0.5, step=0.02)
+                        msk0 = gr.Checkbox(label='Use mask?')
+                        swapf0 = image_mimage_swap(img0, imgm0)
 
-                with gr.Column():
-                    img1  = gr.Image(label='Image Input', type='pil', elem_id='customized_imbox')
-                    img1.as_example = types.MethodType(customized_as_example, img1)
-                    imgm1 = gr.Image(label='Image Input with Mask', type='pil', elem_id='customized_imbox', tool='sketch', source="upload", visible=False)
-                    imgm1.postprocess = types.MethodType(customized_postprocess, imgm1)
-                    imgm1.as_example = types.MethodType(customized_as_example, imgm1)
-                    istrength1 = gr.Slider(label="Weight", minimum=0, maximum=1, value=1, step=0.02)
-                    fcs1 = gr.Slider(label="Focus (Semantic -- Style)", minimum=0, maximum=1, value=0.5, step=0.02)
-                    msk1 = gr.Checkbox(label='Use mask?')
-                    swapf1 = image_mimage_swap(img1, imgm1)
+                        msk0.change(
+                            fn=swapf0,
+                            inputs=[img0, imgm0, msk0],
+                            outputs=[img0, imgm0],)
+                        input_session.append([img0, imgm0, istrength0, fcs0, msk0])
 
-                    msk1.change(
-                        fn=swapf1,
-                        inputs=[img1, imgm1, msk1],
-                        outputs=[img1, imgm1],)
-                    input_session.append([img1, imgm1, istrength1, fcs1, msk1])
+                    with gr.Column():
+                        img1  = gr.Image(label='Image Input', type='pil', elem_id='customized_imbox')
+                        img1.as_example = types.MethodType(customized_as_example, img1)
+                        imgm1 = gr.Image(label='Image Input with Mask', type='pil', elem_id='customized_imbox', tool='sketch', source="upload", visible=False)
+                        imgm1.postprocess = types.MethodType(customized_postprocess, imgm1)
+                        imgm1.as_example = types.MethodType(customized_as_example, imgm1)
+                        istrength1 = gr.Slider(label="Weight", minimum=0, maximum=1, value=1, step=0.02)
+                        fcs1 = gr.Slider(label="Focus (Semantic -- Style)", minimum=0, maximum=1, value=0.5, step=0.02)
+                        msk1 = gr.Checkbox(label='Use mask?')
+                        swapf1 = image_mimage_swap(img1, imgm1)
 
-            gr.HTML('<p id=myinst>&nbsp Weight: The strength of the reference image. This weight is subject to <u>Text Domination</u>).</p>'+
-                    '<p id=myinst>&nbsp Focus: Focus on what aspect of the image? (0-semantic, 0.5-balanced (default), 1-style).</p>'+
-                    '<p id=myinst>&nbsp Mask: Remove regions on reference image so they will not influence the output.</p>',)
+                        msk1.change(
+                            fn=swapf1,
+                            inputs=[img1, imgm1, msk1],
+                            outputs=[img1, imgm1],)
+                        input_session.append([img1, imgm1, istrength1, fcs1, msk1])
 
-            text = gr.Textbox(lines=2, placeholder="Input prompt...", label='Text Input')
-            tstrength = gr.Slider(label="Text Domination (NoEffect -- TextOnly)", minimum=0, maximum=1, value=0, step=0.02)
+                gr.HTML('<p id=myinst>&nbsp Weight: The strength of the reference image. This weight is subject to <u>Text Domination</u>).</p>'+
+                        '<p id=myinst>&nbsp Focus: Focus on what aspect of the image? (0-semantic, 0.5-balanced (default), 1-style).</p>'+
+                        '<p id=myinst>&nbsp Mask: Remove regions on reference image so they will not influence the output.</p>',)
 
-            seed = gr.Number(20, label="Seed", precision=0)
-            button = gr.Button("Run")
+                text = gr.Textbox(lines=2, placeholder="Input prompt...", label='Text Input')
+                tstrength = gr.Slider(label="Text Domination (NoEffect -- TextOnly)", minimum=0, maximum=1, value=0, step=0.02)
 
-        with gr.Column(min_width=470):
-            input_gallary = gr.Gallery(label="Input Display", elem_id="customized_imbox").style(grid=2)
-            output_gallary = gr.Gallery(label="Image Result", elem_id="customized_imbox").style(grid=n_sample_image)
+                seed = gr.Number(20, label="Seed", precision=0)
+                button = gr.Button("Run")
 
-    input_list = []
-    for i in input_session:
-        input_list += i
-    input_list += [text, tstrength, seed]
-    button.click(
-        vd_inference.inference_tcg, 
-        inputs=input_list,
-        outputs=[input_gallary, output_gallary])
+            with gr.Column(min_width=470):
+                input_gallary = gr.Gallery(label="Input Display", elem_id="customized_imbox").style(grid=2)
+                output_gallary = gr.Gallery(label="Image Result", elem_id="customized_imbox").style(grid=n_sample_image)
 
-    if with_example:
-        create_myexamples(
-            label='Examples',
-            examples=get_example('Triple-Context'),
-            fn=vd_inference.inference_tcg,
+        input_list = []
+        for i in input_session:
+            input_list += i
+        input_list += [text, tstrength, seed]
+        button.click(
+            vd_inference.inference_tcg,
             inputs=input_list,
-            outputs=[input_gallary, output_gallary, ],
-            cache_examples=cache_examples, )
+            outputs=[input_gallary, output_gallary])
 
-    gr.HTML('<br><p id=myinst>&nbsp How to add mask: Please see the following instructions.</p><br>'+
-            '<div id="maskinst">'+
-                '<img src="file/assets/demo/misc/mask_inst1.gif">'+
-                '<img src="file/assets/demo/misc/mask_inst2.gif">'+
-                '<img src="file/assets/demo/misc/mask_inst3.gif">'+
-            '</div>')
+        if with_example:
+            create_myexamples(
+                label='Examples',
+                examples=get_example('Triple-Context'),
+                fn=vd_inference.inference_tcg,
+                inputs=input_list,
+                outputs=[input_gallary, output_gallary, ],
+                cache_examples=cache_examples, )
 
-def mcg_interface(with_example=False):
-    num_img_input = 4
-    gr.HTML('<p id=myinst>&nbsp Description: ' + get_instruction("Multi-Context") + '</p>')
-    with gr.Row():
-        input_session = []
-        with gr.Column():
-            for idx in range(num_img_input):
-                with gr.Tab('Image{}'.format(idx+1)):
-                    img = gr.Image(label='Image Input', type='pil', elem_id='customized_imbox')
-                    img.as_example = types.MethodType(customized_as_example, img)
-                    imgm = gr.Image(label='Image Input with Mask', type='pil', elem_id='customized_imbox', tool='sketch', source="upload", visible=False)
-                    imgm.postprocess = types.MethodType(customized_postprocess, imgm)
-                    imgm.as_example = types.MethodType(customized_as_example, imgm)
+        gr.HTML('<br><p id=myinst>&nbsp How to add mask: Please see the following instructions.</p><br>'+
+                '<div id="maskinst">'+
+                    '<img src="file/assets/demo/misc/mask_inst1.gif">'+
+                    '<img src="file/assets/demo/misc/mask_inst2.gif">'+
+                    '<img src="file/assets/demo/misc/mask_inst3.gif">'+
+                '</div>')
 
-                    with gr.Row():
-                        istrength = gr.Slider(label="Weight", minimum=0, maximum=1, value=1, step=0.02)
-                        fcs = gr.Slider(label="Focus (Semantic -- Style)", minimum=0, maximum=1, value=0.5, step=0.02)
-                    msk = gr.Checkbox(label='Use mask?')
-                    gr.HTML('<p id=myinst>&nbsp Weight: The strength of the reference image. This weight is subject to <u>Text Domination</u>).</p>'+
-                            '<p id=myinst>&nbsp Focus: Focus on what aspect of the image? (0-semantic, 0.5-balanced (default), 1-style).</p>'+
-                            '<p id=myinst>&nbsp Mask: Remove regions on reference image so they will not influence the output.</p>',)
+    def mcg_interface(with_example=False):
+        num_img_input = 4
+        gr.HTML('<p id=myinst>&nbsp Description: ' + get_instruction("Multi-Context") + '</p>')
+        with gr.Row():
+            input_session = []
+            with gr.Column():
+                for idx in range(num_img_input):
+                    with gr.Tab('Image{}'.format(idx+1)):
+                        img = gr.Image(label='Image Input', type='pil', elem_id='customized_imbox')
+                        img.as_example = types.MethodType(customized_as_example, img)
+                        imgm = gr.Image(label='Image Input with Mask', type='pil', elem_id='customized_imbox', tool='sketch', source="upload", visible=False)
+                        imgm.postprocess = types.MethodType(customized_postprocess, imgm)
+                        imgm.as_example = types.MethodType(customized_as_example, imgm)
 
-                    msk.change(
-                        fn=image_mimage_swap(img, imgm),
-                        inputs=[img, imgm, msk],
-                        outputs=[img, imgm],)
-                    input_session.append([img, imgm, istrength, fcs, msk])
+                        with gr.Row():
+                            istrength = gr.Slider(label="Weight", minimum=0, maximum=1, value=1, step=0.02)
+                            fcs = gr.Slider(label="Focus (Semantic -- Style)", minimum=0, maximum=1, value=0.5, step=0.02)
+                        msk = gr.Checkbox(label='Use mask?')
+                        gr.HTML('<p id=myinst>&nbsp Weight: The strength of the reference image. This weight is subject to <u>Text Domination</u>).</p>'+
+                                '<p id=myinst>&nbsp Focus: Focus on what aspect of the image? (0-semantic, 0.5-balanced (default), 1-style).</p>'+
+                                '<p id=myinst>&nbsp Mask: Remove regions on reference image so they will not influence the output.</p>',)
 
-            text = gr.Textbox(lines=2, placeholder="Input prompt...", label='Text Input')
-            tstrength = gr.Slider(label="Text Domination (NoEffect -- TextOnly)", minimum=0, maximum=1, value=0, step=0.02)
+                        msk.change(
+                            fn=image_mimage_swap(img, imgm),
+                            inputs=[img, imgm, msk],
+                            outputs=[img, imgm],)
+                        input_session.append([img, imgm, istrength, fcs, msk])
 
-            seed = gr.Number(20, label="Seed", precision=0)
-            button = gr.Button("Run")
+                text = gr.Textbox(lines=2, placeholder="Input prompt...", label='Text Input')
+                tstrength = gr.Slider(label="Text Domination (NoEffect -- TextOnly)", minimum=0, maximum=1, value=0, step=0.02)
+
+                seed = gr.Number(20, label="Seed", precision=0)
+                button = gr.Button("Run")
 
 
-        with gr.Column():
-            input_gallary = gr.Gallery(label="Input Display", elem_id='customized_imbox').style(grid=4)
-            output_gallary = gr.Gallery(label="Image Result", elem_id='customized_imbox').style(grid=n_sample_image)
+            with gr.Column():
+                input_gallary = gr.Gallery(label="Input Display", elem_id='customized_imbox').style(grid=4)
+                output_gallary = gr.Gallery(label="Image Result", elem_id='customized_imbox').style(grid=n_sample_image)
 
-    input_list = []
-    for i in input_session:
-        input_list += i
-    input_list += [text, tstrength, seed]
-    button.click(
-        vd_inference.inference_mcg, 
-        inputs=input_list,
-        outputs=[input_gallary, output_gallary], )
-
-    if with_example:
-        create_myexamples(
-            label='Examples',
-            examples=get_example('Multi-Context'),
-            fn=vd_inference.inference_mcg,
+        input_list = []
+        for i in input_session:
+            input_list += i
+        input_list += [text, tstrength, seed]
+        button.click(
+            vd_inference.inference_mcg,
             inputs=input_list,
-            outputs=[input_gallary, output_gallary],
-            cache_examples=cache_examples, )
+            outputs=[input_gallary, output_gallary], )
 
-    gr.HTML('<br><p id=myinst>&nbsp How to add mask: Please see the following instructions.</p><br>'+
-            '<div id="maskinst">'+
-                '<img src="file/assets/demo/misc/mask_inst1.gif">'+
-                '<img src="file/assets/demo/misc/mask_inst2.gif">'+
-                '<img src="file/assets/demo/misc/mask_inst3.gif">'+
-            '</div>')
+        if with_example:
+            create_myexamples(
+                label='Examples',
+                examples=get_example('Multi-Context'),
+                fn=vd_inference.inference_mcg,
+                inputs=input_list,
+                outputs=[input_gallary, output_gallary],
+                cache_examples=cache_examples, )
 
-###########
-# Example #
-###########
+        gr.HTML('<br><p id=myinst>&nbsp How to add mask: Please see the following instructions.</p><br>'+
+                '<div id="maskinst">'+
+                    '<img src="file/assets/demo/misc/mask_inst1.gif">'+
+                    '<img src="file/assets/demo/misc/mask_inst2.gif">'+
+                    '<img src="file/assets/demo/misc/mask_inst3.gif">'+
+                '</div>')
 
-def get_example(mode):
-    if mode == 'Text-to-Image':
-        case = [
-            ['a dream of a village in china, by Caspar David Friedrich, matte painting trending on artstation HQ', 23],
-            ['a beautiful landscape with mountains and rivers', 20],
-        ]
-    elif mode == "Image-Variation":
-        case = [
-            ['assets/demo/reg_example/ghibli.jpg', 0, 0.5, 'None', 20],
-            ['assets/demo/reg_example/ghibli.jpg', 0.5, 0.5, 'None', 20],
-            ['assets/demo/reg_example/matisse.jpg', 0, 0, 'None', 20],
-            ['assets/demo/reg_example/matisse.jpg', 0, 1, 'Simple', 20],
-            ['assets/demo/reg_example/vermeer.jpg', 0.2, 0.3, 'None', 30],
-        ]
-    elif mode == "Image-to-Text":
-        case = [
-            ['assets/demo/reg_example/house_by_lake.jpg', 20],
-        ]
-    elif mode == "Text-Variation":
-        case = [
-            ['heavy arms gundam penguin mech', 20],
-        ]
-    elif mode == "Dual-Context":
-        case = [
-            ['assets/demo/reg_example/benz.jpg', 0.5, 'cyberpunk 2077', 0.7, 22],
-            ['assets/demo/reg_example/ghibli.jpg', 1, 'Red maple on a hill in golden Autumn.', 0.5, 21],
-        ]
-    elif mode == "Triple-Context":
-        case = [
-            [
-                'assets/demo/reg_example/night_light.jpg', None, 1   , 0.5, False,
-                'assets/demo/reg_example/paris.jpg'      , None, 0.94, 0.5, False,
-                "snow on the street", 0.4, 28],
-            [
-                'assets/demo/tcg_example/e1i0.jpg', None, 1  , 0.5, False,
-                'assets/demo/tcg_example/e1i1.jpg', None, 0.94, 0.5, False,
-                "a painting of an elegant woman in front of the moon", 0.2, 217],
-            [
-                'assets/demo/tcg_example/e2i0.jpg',  None, 1, 0.5, False,
-                'assets/demo/reg_example/paris.jpg', None, 1, 0.5, False,
-                "", 0, 29],
-            [
-                'assets/demo/tcg_example/e0i0.jpg', None, 1  , 0.5, False,
-                'assets/demo/tcg_example/e0i1.jpg', None, 0.9, 0.5, False,
-                "rose blooms on the tree", 0.2, 20],
-            [
-                'assets/demo/reg_example/ghibli.jpg', None, 1   , 1  , False,
-                'assets/demo/reg_example/space.jpg' , None, 0.88, 0.5, False,
-                "", 0, 20],
-            [
-                'assets/demo/reg_example/train.jpg'  , None, 0.8, 0.5, False,
-                'assets/demo/reg_example/matisse.jpg', None, 1  , 1  , False,
-                "", 0, 20],
-        ]
-    elif mode == "Multi-Context":
-        case = [
-            [
-                'assets/demo/mcg_example/e0i0.jpg', None, 1, 0.5, False,
-                'assets/demo/mcg_example/e0i1.jpg', None, 1, 0.5, False,
-                'assets/demo/mcg_example/e0i2.jpg', None, 0.86, 0.5, False,
-                None, None, 1, 0.5, False,
-                "", 0, 20],
-        ]
-    else:
-        raise ValueError
-    return case
+    ###########
+    # Example #
+    ###########
+
+    def get_example(mode):
+        if mode == 'Text-to-Image':
+            case = [
+                ['a dream of a village in china, by Caspar David Friedrich, matte painting trending on artstation HQ', 23],
+                ['a beautiful landscape with mountains and rivers', 20],
+            ]
+        elif mode == "Image-Variation":
+            case = [
+                ['assets/demo/reg_example/ghibli.jpg', 0, 0.5, 'None', 20],
+                ['assets/demo/reg_example/ghibli.jpg', 0.5, 0.5, 'None', 20],
+                ['assets/demo/reg_example/matisse.jpg', 0, 0, 'None', 20],
+                ['assets/demo/reg_example/matisse.jpg', 0, 1, 'Simple', 20],
+                ['assets/demo/reg_example/vermeer.jpg', 0.2, 0.3, 'None', 30],
+            ]
+        elif mode == "Image-to-Text":
+            case = [
+                ['assets/demo/reg_example/house_by_lake.jpg', 20],
+            ]
+        elif mode == "Text-Variation":
+            case = [
+                ['heavy arms gundam penguin mech', 20],
+            ]
+        elif mode == "Dual-Context":
+            case = [
+                ['assets/demo/reg_example/benz.jpg', 0.5, 'cyberpunk 2077', 0.7, 22],
+                ['assets/demo/reg_example/ghibli.jpg', 1, 'Red maple on a hill in golden Autumn.', 0.5, 21],
+            ]
+        elif mode == "Triple-Context":
+            case = [
+                [
+                    'assets/demo/reg_example/night_light.jpg', None, 1   , 0.5, False,
+                    'assets/demo/reg_example/paris.jpg'      , None, 0.94, 0.5, False,
+                    "snow on the street", 0.4, 28],
+                [
+                    'assets/demo/tcg_example/e1i0.jpg', None, 1  , 0.5, False,
+                    'assets/demo/tcg_example/e1i1.jpg', None, 0.94, 0.5, False,
+                    "a painting of an elegant woman in front of the moon", 0.2, 217],
+                [
+                    'assets/demo/tcg_example/e2i0.jpg',  None, 1, 0.5, False,
+                    'assets/demo/reg_example/paris.jpg', None, 1, 0.5, False,
+                    "", 0, 29],
+                [
+                    'assets/demo/tcg_example/e0i0.jpg', None, 1  , 0.5, False,
+                    'assets/demo/tcg_example/e0i1.jpg', None, 0.9, 0.5, False,
+                    "rose blooms on the tree", 0.2, 20],
+                [
+                    'assets/demo/reg_example/ghibli.jpg', None, 1   , 1  , False,
+                    'assets/demo/reg_example/space.jpg' , None, 0.88, 0.5, False,
+                    "", 0, 20],
+                [
+                    'assets/demo/reg_example/train.jpg'  , None, 0.8, 0.5, False,
+                    'assets/demo/reg_example/matisse.jpg', None, 1  , 1  , False,
+                    "", 0, 20],
+            ]
+        elif mode == "Multi-Context":
+            case = [
+                [
+                    'assets/demo/mcg_example/e0i0.jpg', None, 1, 0.5, False,
+                    'assets/demo/mcg_example/e0i1.jpg', None, 1, 0.5, False,
+                    'assets/demo/mcg_example/e0i2.jpg', None, 0.86, 0.5, False,
+                    None, None, 1, 0.5, False,
+                    "", 0, 20],
+            ]
+        else:
+            raise ValueError
+        return case
 
 #############
 # Interface #
 #############
 
-css = """
-    #customized_imbox {
-        min-height: 450px;
-    }
-    #customized_imbox>div[data-testid="image"] {
-        min-height: 450px;
-    }
-    #customized_imbox>div[data-testid="image"]>div {
-        min-height: 450px;
-    }
-    #customized_imbox>div[data-testid="image"]>iframe {
-        min-height: 450px;
-    }
-    #customized_imbox>div.unpadded_box {
-        min-height: 450px;
-    }
-    #myinst {
-        font-size: 0.8rem; 
-        margin: 0rem;
-        color: #6B7280;
-    }
-    #maskinst {
-        text-align: justify;
-        min-width: 1200px;
-    }
-    #maskinst>img {
-        min-width:399px;
-        max-width:450px;
-        vertical-align: top;
-        display: inline-block;
-    }
-    #maskinst:after {
-        content: "";
-        width: 100%;
-        display: inline-block;
-    }
-"""
+    css = """
+        #customized_imbox {
+            min-height: 450px;
+        }
+        #customized_imbox>div[data-testid="image"] {
+            min-height: 450px;
+        }
+        #customized_imbox>div[data-testid="image"]>div {
+            min-height: 450px;
+        }
+        #customized_imbox>div[data-testid="image"]>iframe {
+            min-height: 450px;
+        }
+        #customized_imbox>div.unpadded_box {
+            min-height: 450px;
+        }
+        #myinst {
+            font-size: 0.8rem;
+            margin: 0rem;
+            color: #6B7280;
+        }
+        #maskinst {
+            text-align: justify;
+            min-width: 1200px;
+        }
+        #maskinst>img {
+            min-width:399px;
+            max-width:450px;
+            vertical-align: top;
+            display: inline-block;
+        }
+        #maskinst:after {
+            content: "";
+            width: 100%;
+            display: inline-block;
+        }
+    """
 
-if True:
-    with gr.Blocks(css=css) as demo:
-        gr.HTML(
-            """
-            <div style="text-align: center; max-width: 1200px; margin: 20px auto;">
-            <h1 style="font-weight: 900; font-size: 3rem; margin: 0rem">
-                Versatile Diffusion
-            </h1>
-            <h2 style="font-weight: 450; font-size: 1rem; margin-top: 0.5rem; margin-bottom: 0.5rem">
-            We built <b>Versatile Diffusion (VD), the first unified multi-flow multimodal diffusion framework</b>, as a step towards <b>Universal Generative AI</b>. 
-            VD can natively support image-to-text, image-variation, text-to-image, and text-variation, 
-            and can be further extended to other applications such as 
-            semantic-style disentanglement, image-text dual-guided generation, latent image-to-text-to-image editing, and more. 
-            Future versions will support more modalities such as speech, music, video and 3D. 
-            </h2>
-            <h3 style="font-weight: 450; font-size: 1rem; margin: 0rem">
-            Xingqian Xu, Atlas Wang, Eric Zhang, Kai Wang, 
-            and <a href="https://www.humphreyshi.com/home">Humphrey Shi</a> 
-            [<a href="https://arxiv.org/abs/2211.08332" style="color:blue;">arXiv</a>] 
-            [<a href="https://github.com/SHI-Labs/Versatile-Diffusion" style="color:blue;">GitHub</a>]
-            </h3>
-            </div>
-            """)
+    if True:
+        with gr.Blocks(css=css) as demo:
+            gr.HTML(
+                """
+                <div style="text-align: center; max-width: 1200px; margin: 20px auto;">
+                <h1 style="font-weight: 900; font-size: 3rem; margin: 0rem">
+                    Versatile Diffusion
+                </h1>
+                <h2 style="font-weight: 450; font-size: 1rem; margin-top: 0.5rem; margin-bottom: 0.5rem">
+                We built <b>Versatile Diffusion (VD), the first unified multi-flow multimodal diffusion framework</b>, as a step towards <b>Universal Generative AI</b>.
+                VD can natively support image-to-text, image-variation, text-to-image, and text-variation,
+                and can be further extended to other applications such as
+                semantic-style disentanglement, image-text dual-guided generation, latent image-to-text-to-image editing, and more.
+                Future versions will support more modalities such as speech, music, video and 3D.
+                </h2>
+                <h3 style="font-weight: 450; font-size: 1rem; margin: 0rem">
+                Xingqian Xu, Atlas Wang, Eric Zhang, Kai Wang,
+                and <a href="https://www.humphreyshi.com/home">Humphrey Shi</a>
+                [<a href="https://arxiv.org/abs/2211.08332" style="color:blue;">arXiv</a>]
+                [<a href="https://github.com/SHI-Labs/Versatile-Diffusion" style="color:blue;">GitHub</a>]
+                </h3>
+                </div>
+                """)
 
-        with gr.Tab('Text-to-Image'):
-            t2i_interface(with_example=True)
-        with gr.Tab('Image-Variation'):
-            i2i_interface(with_example=True)
-        with gr.Tab('Image-to-Text'):
-            i2t_interface(with_example=True)
-        with gr.Tab('Text-Variation'):
-            t2t_interface(with_example=True)
-        with gr.Tab('Dual-Context Image-Generation'):
-            dcg_interface(with_example=True)
-        with gr.Tab('Triple-Context Image-Blender'):
-            tcg_interface(with_example=True)
-        with gr.Tab('Multi-Context Image-Blender'):
-            mcg_interface(with_example=True)
+            with gr.Tab('Text-to-Image'):
+                t2i_interface(with_example=True)
+            with gr.Tab('Image-to-Text'):
+                i2t_interface(with_example=True)
 
-        gr.HTML(
-            """
-            <div style="text-align: justify; max-width: 1200px; margin: 20px auto;">
-            <h3 style="font-weight: 450; font-size: 0.8rem; margin: 0rem">
-            <b>Version</b>: {}
-            </h3>
-            <h3 style="font-weight: 450; font-size: 0.8rem; margin: 0rem">
-            <b>Caution</b>: 
-            We would like the raise the awareness of users of this demo of its potential issues and concerns.
-            Like previous large foundation models, Versatile Diffusion could be problematic in some cases, partially due to the imperfect training data and pretrained network (VAEs / context encoders) with limited scope.
-            In its future research phase, VD may do better on tasks such as text-to-image, image-to-text, etc., with the help of more powerful VAEs, more sophisticated network designs, and more cleaned data.
-            So far, we keep all features available for research testing both to show the great potential of the VD framework and to collect important feedback to improve the model in the future.
-            We welcome researchers and users to report issues with the HuggingFace community discussion feature or email the authors.
-            </h3>
-            <h3 style="font-weight: 450; font-size: 0.8rem; margin: 0rem">
-            <b>Biases and content acknowledgement</b>:
-            Beware that VD may output content that reinforces or exacerbates societal biases, as well as realistic faces, pornography, and violence. 
-            VD was trained on the LAION-2B dataset, which scraped non-curated online images and text, and may contained unintended exceptions as we removed illegal content. 
-            VD in this demo is meant only for research purposes.
-            </h3>
-            </div>
-            """.format(' '+vd_inference.which))
+            # with gr.Tab('Image-Variation'):
+            #     i2i_interface(with_example=True)
+            # with gr.Tab('Text-Variation'):
+            #     t2t_interface(with_example=True)
+            # with gr.Tab('Dual-Context Image-Generation'):
+            #     dcg_interface(with_example=True)
+            # with gr.Tab('Triple-Context Image-Blender'):
+            #     tcg_interface(with_example=True)
+            # with gr.Tab('Multi-Context Image-Blender'):
+                # mcg_interface(with_example=True)
 
-    demo.launch(share=True)
-    # demo.launch(debug=True)
+            gr.HTML(
+                """
+                <div style="text-align: justify; max-width: 1200px; margin: 20px auto;">
+                <h3 style="font-weight: 450; font-size: 0.8rem; margin: 0rem">
+                <b>Version</b>: {}
+                </h3>
+                <h3 style="font-weight: 450; font-size: 0.8rem; margin: 0rem">
+                <b>Caution</b>:
+                We would like the raise the awareness of users of this demo of its potential issues and concerns.
+                Like previous large foundation models, Versatile Diffusion could be problematic in some cases, partially due to the imperfect training data and pretrained network (VAEs / context encoders) with limited scope.
+                In its future research phase, VD may do better on tasks such as text-to-image, image-to-text, etc., with the help of more powerful VAEs, more sophisticated network designs, and more cleaned data.
+                So far, we keep all features available for research testing both to show the great potential of the VD framework and to collect important feedback to improve the model in the future.
+                We welcome researchers and users to report issues with the HuggingFace community discussion feature or email the authors.
+                </h3>
+                <h3 style="font-weight: 450; font-size: 0.8rem; margin: 0rem">
+                <b>Biases and content acknowledgement</b>:
+                Beware that VD may output content that reinforces or exacerbates societal biases, as well as realistic faces, pornography, and violence.
+                VD was trained on the LAION-2B dataset, which scraped non-curated online images and text, and may contained unintended exceptions as we removed illegal content.
+                VD in this demo is meant only for research purposes.
+                </h3>
+                </div>
+                """.format(' '+vd_inference.which))
+
+        demo.launch(share=True)
+        # demo.launch(debug=True)

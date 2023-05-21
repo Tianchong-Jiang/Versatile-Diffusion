@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from contextlib import contextmanager
-from lib.model_zoo.common.get_model import get_model, register
+from versatile_diffusion.lib.model_zoo.common.get_model import get_model, register
 
 # from taming.modules.vqvae.quantize import VectorQuantizer2 as VectorQuantizer
 

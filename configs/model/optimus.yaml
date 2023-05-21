@@ -10,7 +10,7 @@ optimus_bert_encoder:
   # pth: pretrained/optimus_bert_encoder.pth
   args:
     config:
-      architectures: 
+      architectures:
         - BertForMaskedLM
       attention_probs_dropout_prob: 0.1
       finetuning_task: null
@@ -36,9 +36,9 @@ optimus_bert_tokenizer:
   super_cfg: optimus
   type: optimus_bert_tokenizer
   args:
-    do_lower_case: false 
+    do_lower_case: false
     max_len: 512
-    vocab_file: lib/model_zoo/optimus_models/vocab/bert-base-cased-vocab.txt
+    vocab_file: versatile_diffusion/lib/model_zoo/optimus_models/vocab/bert-base-cased-vocab.txt
 
 optimus_gpt2_decoder:
   super_cfg: optimus
@@ -84,10 +84,10 @@ optimus_gpt2_tokenizer:
   super_cfg: optimus
   type: optimus_gpt2_tokenizer
   args:
-    do_lower_case: false 
+    do_lower_case: false
     max_len: 1024
-    vocab_file: lib/model_zoo/optimus_models/vocab/gpt2-vocab.json
-    merges_file: lib/model_zoo/optimus_models/vocab/gpt2-merges.txt
+    vocab_file: versatile_diffusion/lib/model_zoo/optimus_models/vocab/gpt2-vocab.json
+    merges_file: versatile_diffusion/lib/model_zoo/optimus_models/vocab/gpt2-merges.txt
 
 optimus_v1:
   super_cfg: optimus
@@ -99,5 +99,5 @@ optimus_v1:
     tokenizer_decoder: MODEL(optimus_gpt2_tokenizer)
     args:
       latent_size: 768
-  pth: pretrained/optimus-vae.pth
+  pth: /root/pretrained/optimus-vae.pth
   # hfm: ['shi-labs/versatile-diffusion-model', 'pretrained_pth/optimus-vae.pth']

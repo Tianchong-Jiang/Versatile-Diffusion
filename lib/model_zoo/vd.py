@@ -6,8 +6,8 @@ import numpy.random as npr
 import copy
 from functools import partial
 from contextlib import contextmanager
-from lib.model_zoo.common.get_model import get_model, register
-from lib.log_service import print_log
+from versatile_diffusion.lib.model_zoo.common.get_model import get_model, register
+from versatile_diffusion.lib.log_service import print_log
 
 symbol = 'vd'
 
@@ -59,10 +59,10 @@ class VD_v2_0(nn.Module):
                  loss_type="l2",
                  l_simple_weight=1.,
                  l_elbo_weight=0.,
-                 
+
                  v_posterior=0.,
-                 learn_logvar=False, 
-                 logvar_init=0, 
+                 learn_logvar=False,
+                 logvar_init=0,
 
                  latent_scale_factor=None,):
 
@@ -124,12 +124,12 @@ class VD_v2_0(nn.Module):
                 net[name] = String_Reg_Buffer(cfg)
         return net
 
-    def register_schedule(self, 
-                          given_betas=None, 
-                          beta_schedule="linear", 
+    def register_schedule(self,
+                          given_betas=None,
+                          beta_schedule="linear",
                           timesteps=1000,
-                          linear_start=1e-4, 
-                          linear_end=2e-2, 
+                          linear_start=1e-4,
+                          linear_end=2e-2,
                           cosine_s=8e-3):
         if given_betas is not None:
             betas = given_betas

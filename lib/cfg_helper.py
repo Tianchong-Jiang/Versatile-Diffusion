@@ -21,7 +21,7 @@ from .model_zoo import get_model
 def cfg_solvef(cmd, root):
     if not isinstance(cmd, str):
         return cmd
-    
+
     if cmd.find('SAME')==0:
         zoom = root
         p = cmd[len('SAME'):].strip('()').split('.')
@@ -49,7 +49,7 @@ def cfg_solvef(cmd, root):
                 pi = int(pi)
             except:
                 pass
-            
+
             try:
                 zoom = zoom[pi]
             except:
@@ -82,9 +82,9 @@ def cfg_solvef(cmd, root):
     return cmd
 
 def cfg_solve(cfg, cfg_root):
-    # The function solve cfg element such that 
+    # The function solve cfg element such that
     #   all sorrogate input are settled.
-    #   (i.e. SAME(***) ) 
+    #   (i.e. SAME(***) )
     if isinstance(cfg, list):
         for i in range(len(cfg)):
             if isinstance(cfg[i], (list, dict)):
@@ -96,14 +96,14 @@ def cfg_solve(cfg, cfg_root):
             if isinstance(cfg[k], (list, dict)):
                 cfg[k] = cfg_solve(cfg[k], cfg_root)
             else:
-                cfg[k] = cfg_solvef(cfg[k], cfg_root)        
+                cfg[k] = cfg_solvef(cfg[k], cfg_root)
     return cfg
 
 class model_cfg_bank(object):
     def __init__(self):
-        self.cfg_dir = osp.join('configs', 'model')
+        self.cfg_dir = osp.join('versatile_diffusion/configs', 'model')
         self.cfg_bank = edict()
-    
+
     def __call__(self, name):
         if name not in self.cfg_bank:
             cfg_path = self.get_yaml_path(name)
@@ -222,7 +222,7 @@ class experiment_cfg_bank(object):
             cfg = edict(cfg)
 
         cfg = cfg_solve(cfg, cfg)
-        cfg = cfg_solve(cfg, cfg) 
+        cfg = cfg_solve(cfg, cfg)
         # twice for SEARCH
         self.cfg_bank[name] = cfg
         return copy.deepcopy(cfg)
@@ -261,7 +261,7 @@ def get_experiment_id(ref=None):
             return int(ref)
         except:
             pass
-        
+
         _, ref = osp.split(ref)
         ref = ref.split('_')[0]
         try:
@@ -289,7 +289,7 @@ def get_command_line_args():
     parser.add_argument('--nodes', type=int)
     parser.add_argument('--addr', type=str, default='127.0.0.1')
     parser.add_argument('--port', type=int, default=11233)
- 
+
     parser.add_argument('--signature', nargs='+', type=str)
     parser.add_argument('--seed', type=int)
 
@@ -327,7 +327,7 @@ def get_command_line_args():
     else:
         import socket
         hostname = socket.gethostname()
-        assert cfg.env.master_addr == args.node_list[0] 
+        assert cfg.env.master_addr == args.node_list[0]
         cfg.env.node_rank = args.node_list.index(hostname)
         cfg.env.nodes = len(args.node_list)
         cfg.env.node_list = args.node_list
@@ -360,7 +360,7 @@ def get_command_line_args():
             else:
                 cfg.eval.eval_subdir = args.eval_subdir
         if args.pretrained is not None:
-            cfg.eval.pretrained = args.pretrained 
+            cfg.eval.pretrained = args.pretrained
           # The override pretrained over the setting in cfg.model
 
     if args.seed is not None:
@@ -380,7 +380,7 @@ def cfg_initiates(cfg):
     ###############################
     # get some environment params #
     ###############################
-    
+
     cfge.computer = os.uname()
     cfge.torch_version = str(torch.__version__)
 
@@ -426,13 +426,13 @@ def cfg_initiates(cfg):
             os.environ['NCCL_SOCKET_FAMILY'] = 'AF_INET'
         if cfg.env.dist_backend=='gloo':
             os.environ['GLOO_SOCKET_FAMILY'] = 'AF_INET'
-    
+
     #######################
     # cuda visible device #
     #######################
 
     os.environ["CUDA_VISIBLE_DEVICES"] = ','.join(
-        [str(gid) for gid in cfge.gpu_device]) 
+        [str(gid) for gid in cfge.gpu_device])
 
     #####################
     # return resume cfg #
@@ -451,9 +451,9 @@ def cfg_initiates(cfg):
     ##########################################
     # align batch size and num worker config #
     ##########################################
- 
+
     gpu_n = cfge.gpu_count * cfge.nodes
-    def align_batch_size(bs, bs_per_gpu): 
+    def align_batch_size(bs, bs_per_gpu):
         assert (bs is not None) or (bs_per_gpu is not None)
         bs = bs_per_gpu * gpu_n if bs is None else bs
         bs_per_gpu = bs // gpu_n if bs_per_gpu is None else bs_per_gpu
@@ -483,7 +483,7 @@ def cfg_initiates(cfg):
             sig = ['debug']
 
         log_dir = [
-            cfge.log_root_dir, 
+            cfge.log_root_dir,
             '{}_{}'.format(cfgm.symbol, cfgt.dataset.symbol),
             '_'.join([str(cfge.experiment_id)] + sig)
         ]
@@ -515,7 +515,7 @@ def cfg_initiates(cfg):
 
         eval_subdir = cfgv.get('eval_subdir', None)
         # override subdir in debug mode (if eval_subdir is set)
-        eval_subdir = 'debug' if (eval_subdir is not None) and isdebug else eval_subdir 
+        eval_subdir = 'debug' if (eval_subdir is not None) and isdebug else eval_subdir
 
         if eval_subdir is not None:
             log_dir = osp.join(log_dir, exp_dir, eval_subdir)
@@ -566,7 +566,7 @@ def cfg_initiates(cfg):
             fromcodedir = d
             tocodedir = osp.join(codedir, d)
             shutil.copytree(
-                fromcodedir, tocodedir, 
+                fromcodedir, tocodedir,
                 ignore=shutil.ignore_patterns(
                     '*__pycache__*', '*build*'))
         for codei in os.listdir('.'):

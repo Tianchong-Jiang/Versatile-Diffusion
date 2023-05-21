@@ -6,8 +6,8 @@ import numpy as np
 import numpy.random as npr
 import copy
 
-from lib.model_zoo.common.get_model import get_model, register
-from lib.model_zoo.common import utils
+from versatile_diffusion.lib.model_zoo.common.get_model import get_model, register
+from versatile_diffusion.lib.model_zoo.common import utils
 
 from .optimus_models.tokenization_gpt2 import GPT2Tokenizer
 
@@ -16,7 +16,7 @@ symbol = 'optimus'
 @register('optimus_vae')
 class optimus_vae(nn.Module):
     """VAE with normal prior"""
-    def __init__(self, encoder, decoder,  tokenizer_encoder, tokenizer_decoder, args): # 
+    def __init__(self, encoder, decoder,  tokenizer_encoder, tokenizer_decoder, args): #
         super().__init__()
         self.encoder = encoder if isinstance(encoder, nn.Module) else get_model()(encoder)
         self.decoder = decoder if isinstance(decoder, nn.Module) else get_model()(decoder)
@@ -110,8 +110,8 @@ class optimus_vae(nn.Module):
 
     def forward(self, inputs, labels):
 
-        # pdb.set_trace()   
-        
+        # pdb.set_trace()
+
         attention_mask=(inputs > 0).float()
         # logger.info(inputs)
         # logger.info(attention_mask)
@@ -119,21 +119,21 @@ class optimus_vae(nn.Module):
         reconstrution_mask=(labels != 50257).float() # 50257 is the padding token for GPT2
         sent_length = torch.sum(reconstrution_mask, dim=1)
 
-        
+
         outputs = self.encoder(inputs, attention_mask)
         pooled_hidden_fea = outputs[1]  # model outputs are always tuple in pytorch-transformers (see doc)
 
-        if self.args.fb_mode==0: 
+        if self.args.fb_mode==0:
             # Connect hidden feature to the latent space
             latent_z, loss_kl = self.connect(pooled_hidden_fea)
             latent_z = latent_z.squeeze(1)
 
-            
+
             # Decoding
             outputs = self.decoder(input_ids=labels, past=latent_z, labels=labels, label_ignore=self.pad_token_id)
             loss_rec = outputs[0]  # model outputs are always tuple in pytorch-transformers (see doc)
-    
-        elif self.args.fb_mode==1:  
+
+        elif self.args.fb_mode==1:
             # Connect hidden feature to the latent space
             mu, logvar = self.encoder.linear(pooled_hidden_fea).chunk(2, -1)
             latent_z = self.reparameterize(mu, logvar, nsamples=1)
@@ -148,7 +148,7 @@ class optimus_vae(nn.Module):
             outputs = self.decoder(input_ids=labels, past=latent_z, labels=labels, label_ignore=self.pad_token_id)
             loss_rec = outputs[0]  # model outputs are always tuple in pytorch-transformers (see doc)
 
-        elif self.args.fb_mode==2: 
+        elif self.args.fb_mode==2:
             # Connect hidden feature to the latent space
             latent_z, loss_kl = self.connect_deterministic(pooled_hidden_fea)
             latent_z = latent_z.squeeze(1)
@@ -158,12 +158,12 @@ class optimus_vae(nn.Module):
             outputs = self.decoder(input_ids=labels, past=latent_z, labels=labels, label_ignore=self.pad_token_id)
             loss_rec = outputs[0]  # model outputs are always tuple in pytorch-transformers (see doc)
 
-            
+
         # pdb.set_trace()
         if self.args.length_weighted_loss:
             loss = loss_rec / sent_length + self.args.beta * loss_kl
         else:
-            loss = loss_rec + self.args.beta * loss_kl 
+            loss = loss_rec + self.args.beta * loss_kl
 
 
         return loss_rec, loss_kl, loss
@@ -256,7 +256,7 @@ class optimus_vae(nn.Module):
         # (batch_size, nz)
 
         mu, logvar = self.encoder.linear(bert_fea).chunk(2, -1)
-        
+
 
         ##################
         # compute KL
@@ -272,7 +272,7 @@ class optimus_vae(nn.Module):
             z = self.reparameterize(mu, logvar, ns)
             # past = self.decoder.linear(z)
             past = z
-         
+
             # [batch, nsamples]
             log_prior = self.eval_prior_dist(z)
             log_gen = self.eval_cond_ll(x1, past)
@@ -286,8 +286,8 @@ class optimus_vae(nn.Module):
             rc_tmp.append(log_gen)
             ll_tmp.append(log_gen + log_prior - log_infer)
 
-            
-        
+
+
         log_prob_iw = log_sum_exp(torch.cat(ll_tmp, dim=-1), dim=-1) - math.log(nsamples)
         log_gen_iw = torch.mean(torch.cat(rc_tmp, dim=-1), dim=-1)
 
@@ -296,7 +296,7 @@ class optimus_vae(nn.Module):
     def nll_iw(self, x0, x1, nsamples, ns=1):
         """compute the importance weighting estimate of the log-likelihood
         Args:
-            x0, x1:  two different tokenization results of x, where x is the data tensor with shape (batch, *). 
+            x0, x1:  two different tokenization results of x, where x is the data tensor with shape (batch, *).
             nsamples: Int
                 the number of samples required to estimate marginal data likelihood
         Returns: Tensor1
@@ -370,8 +370,8 @@ class optimus_vae(nn.Module):
         x_shape = list(x.size())
         z_shape = list(z.size())
         if len(z_shape) == 3:
-            x = x.unsqueeze(1).repeat(1, z_shape[1], 1).contiguous().view(x_shape[0]*z_shape[1], x_shape[-1]) 
-            z = z.contiguous().view(x_shape[0]*z_shape[1], z_shape[-1]) 
+            x = x.unsqueeze(1).repeat(1, z_shape[1], 1).contiguous().view(x_shape[0]*z_shape[1], x_shape[-1])
+            z = z.contiguous().view(x_shape[0]*z_shape[1], z_shape[-1])
 
         return self.log_probability(x, z)
 
@@ -503,7 +503,7 @@ class optimus_vae(nn.Module):
 
     def calc_mi(self, test_data_batch, args):
         # calc_mi_v3
-        import math 
+        import math
         from modules.utils import log_sum_exp
 
         mi = 0
@@ -546,7 +546,7 @@ class optimus_vae(nn.Module):
             # get z_samples
             ###############
             mu, logvar = mu_batch_list[i].cuda(), logvar_batch_list[i].cuda()
-            
+
             # [z_batch, 1, nz]
 
             z_samples = self.reparameterize(mu, logvar, 1)
@@ -664,11 +664,11 @@ def sample_single_sequence_conditional(
         context,
         past=None,
         temperature=1,
-        top_k=0, 
-        top_p=0.0, 
-        eos_token=50829, 
+        top_k=0,
+        top_p=0.0,
+        eos_token=50829,
         max_length=30, ):
-    
+
     past = past.unsqueeze(0)
     generated = context.unsqueeze(0)
     with torch.no_grad():
@@ -752,7 +752,7 @@ class optimus_vae_next(optimus_vae):
             out = sample_single_sequence_conditional(
                 model=self.decoder,
                 context=context_tokens,
-                past=zi, temperature=temperature, 
+                past=zi, temperature=temperature,
                 top_k=0, top_p=1.0,
                 max_length=30,
                 eos_token = eos_token[0],)

@@ -14,7 +14,7 @@ from .diffusion_utils import \
 
 from .attention import SpatialTransformer
 
-from lib.model_zoo.common.get_model import get_model, register
+from versatile_diffusion.lib.model_zoo.common.get_model import get_model, register
 
 symbol = 'openai'
 
@@ -1961,9 +1961,9 @@ class UNetModel2D(nn.Module):
         super().__init__()
 
         ResBlockPreset = partial(
-            ResBlock, dropout=0, dims=2, use_checkpoint=use_checkpoint, 
+            ResBlock, dropout=0, dims=2, use_checkpoint=use_checkpoint,
             use_scale_shift_norm=False)
- 
+
         self.input_channels = input_channels
         self.model_channels = model_channels
         self.num_noattn_blocks = num_noattn_blocks
@@ -2001,7 +2001,7 @@ class UNetModel2D(nn.Module):
                 if with_attn[level_idx]:
                     layers += [
                         SpatialTransformer(
-                            current_channel, num_heads, dim_head, 
+                            current_channel, num_heads, dim_head,
                             depth=1, context_dim=context_dim, )]
 
                 input_blocks += [TimestepEmbedSequential(*layers)]
@@ -2011,7 +2011,7 @@ class UNetModel2D(nn.Module):
                 input_blocks += [
                     TimestepEmbedSequential(
                         Downsample(
-                            current_channel, use_conv=True, 
+                            current_channel, use_conv=True,
                             dims=2, out_channels=current_channel,))]
                 input_block_channels.append(current_channel)
 
@@ -2024,7 +2024,7 @@ class UNetModel2D(nn.Module):
             ResBlockPreset(
                 current_channel, time_embed_dim,),
             SpatialTransformer(
-                current_channel, num_heads, dim_head, 
+                current_channel, num_heads, dim_head,
                 depth=1, context_dim=context_dim, ),
             ResBlockPreset(
                 current_channel, time_embed_dim,),]
@@ -2048,15 +2048,15 @@ class UNetModel2D(nn.Module):
                 if with_attn[level_idx]:
                     layers += [
                         SpatialTransformer(
-                            current_channel, num_heads, dim_head, 
+                            current_channel, num_heads, dim_head,
                             depth=1, context_dim=context_dim,)]
 
                 if level_idx!=0 and block_idx==self.num_noattn_blocks[level_idx]:
                     layers += [
                         Upsample(
-                            current_channel, use_conv=True, 
+                            current_channel, use_conv=True,
                             dims=2, out_channels=current_channel)]
- 
+
                 output_blocks += [TimestepEmbedSequential(*layers)]
 
         self.output_blocks = nn.ModuleList(output_blocks)
@@ -2156,7 +2156,7 @@ class UNetModel0D(nn.Module):
         super().__init__()
 
         FCBlockPreset = partial(FCBlock, dropout=0, use_checkpoint=use_checkpoint)
- 
+
         self.input_channels = input_channels
         self.model_channels = model_channels
         self.num_noattn_blocks = num_noattn_blocks
@@ -2194,7 +2194,7 @@ class UNetModel0D(nn.Module):
                 if with_attn[level_idx]:
                     layers += [
                         SpatialTransformer(
-                            current_channel, num_heads, dim_head, 
+                            current_channel, num_heads, dim_head,
                             depth=1, context_dim=context_dim, )]
 
                 input_blocks += [TimestepEmbedSequential(*layers)]
@@ -2204,7 +2204,7 @@ class UNetModel0D(nn.Module):
                 input_blocks += [
                     TimestepEmbedSequential(
                         Downsample(
-                            current_channel, use_conv=True, 
+                            current_channel, use_conv=True,
                             dims=2, out_channels=current_channel,))]
                 input_block_channels.append(current_channel)
 
@@ -2217,7 +2217,7 @@ class UNetModel0D(nn.Module):
             FCBlockPreset(
                 current_channel, time_embed_dim,),
             SpatialTransformer(
-                current_channel, num_heads, dim_head, 
+                current_channel, num_heads, dim_head,
                 depth=1, context_dim=context_dim, ),
             FCBlockPreset(
                 current_channel, time_embed_dim,),]
@@ -2241,7 +2241,7 @@ class UNetModel0D(nn.Module):
                 if with_attn[level_idx]:
                     layers += [
                         SpatialTransformer(
-                            current_channel, num_heads, dim_head, 
+                            current_channel, num_heads, dim_head,
                             depth=1, context_dim=context_dim,)]
 
                 if level_idx!=0 and block_idx==self.num_noattn_blocks[level_idx]:
@@ -2274,14 +2274,14 @@ class UNetModel0D(nn.Module):
 
 class Linear_MultiDim(nn.Linear):
     def __init__(self, in_features, out_features, *args, **kwargs):
-        
+
         in_features = [in_features] if isinstance(in_features, int) else list(in_features)
         out_features = [out_features] if isinstance(out_features, int) else list(out_features)
         self.in_features_multidim = in_features
         self.out_features_multidim = out_features
         super().__init__(
-            np.array(in_features).prod(), 
-            np.array(out_features).prod(), 
+            np.array(in_features).prod(),
+            np.array(out_features).prod(),
             *args, **kwargs)
 
     def forward(self, x):
@@ -2348,7 +2348,7 @@ class UNetModel0D_MultiDim(nn.Module):
         super().__init__()
 
         FCBlockPreset = partial(FCBlock_MultiDim, dropout=0, use_checkpoint=use_checkpoint)
- 
+
         self.input_channels = input_channels
         self.model_channels = model_channels
         self.num_noattn_blocks = num_noattn_blocks
@@ -2380,7 +2380,7 @@ class UNetModel0D_MultiDim(nn.Module):
             for _ in range(self.num_noattn_blocks[level_idx]):
                 layers = [
                     FCBlockPreset(
-                        current_channel, 
+                        current_channel,
                         time_embed_dim,
                         out_channels = [mult*model_channels, sdim, 1],)]
 
@@ -2389,7 +2389,7 @@ class UNetModel0D_MultiDim(nn.Module):
                 if with_attn[level_idx]:
                     layers += [
                         SpatialTransformer(
-                            current_channel[0], num_heads, dim_head, 
+                            current_channel[0], num_heads, dim_head,
                             depth=1, context_dim=context_dim, )]
 
                 input_blocks += [TimestepEmbedSequential(*layers)]
@@ -2410,7 +2410,7 @@ class UNetModel0D_MultiDim(nn.Module):
             FCBlockPreset(
                 current_channel, time_embed_dim, ),
             SpatialTransformer(
-                current_channel[0], num_heads, dim_head, 
+                current_channel[0], num_heads, dim_head,
                 depth=1, context_dim=context_dim, ),
             FCBlockPreset(
                 current_channel, time_embed_dim, ),]
@@ -2434,7 +2434,7 @@ class UNetModel0D_MultiDim(nn.Module):
                 if with_attn[level_idx]:
                     layers += [
                         SpatialTransformer(
-                            current_channel[0], num_heads, dim_head, 
+                            current_channel[0], num_heads, dim_head,
                             depth=1, context_dim=context_dim,)]
 
                 if level_idx!=0 and block_idx==self.num_noattn_blocks[level_idx]:
@@ -2468,7 +2468,7 @@ class UNetModel0D_MultiDim(nn.Module):
 @register('openai_unet_vd')
 class UNetModelVD(nn.Module):
     def __init__(self,
-                 unet_image_cfg,  
+                 unet_image_cfg,
                  unet_text_cfg, ):
 
         super().__init__()
@@ -2479,7 +2479,7 @@ class UNetModelVD(nn.Module):
         del self.unet_text.time_embed
 
         self.model_channels = self.unet_image.model_channels
-        
+
     def forward(self, x, timesteps, context, xtype='image', ctype='prompt'):
         hs = []
         t_emb = timestep_embedding(timesteps, self.model_channels, repeat_only=False)
@@ -2493,7 +2493,7 @@ class UNetModelVD(nn.Module):
             h = self.mixed_run(i_module, t_module, h, emb, context, xtype, ctype)
             hs.append(h)
         h = self.mixed_run(
-            self.unet_image.middle_block, self.unet_text.middle_block, 
+            self.unet_image.middle_block, self.unet_text.middle_block,
             h, emb, context, xtype, ctype)
         for i_module, t_module in zip(self.unet_image.output_blocks, self.unet_text.output_blocks):
             h = th.cat([h, hs.pop()], dim=1)
@@ -2535,7 +2535,7 @@ class UNetModelVD(nn.Module):
             h = self.mixed_run_dc(i_module, t_module, h, emb, c0, c1, xtype, c0_type, c1_type, mixed_ratio)
             hs.append(h)
         h = self.mixed_run_dc(
-            self.unet_image.middle_block, self.unet_text.middle_block, 
+            self.unet_image.middle_block, self.unet_text.middle_block,
             h, emb, c0, c1, xtype, c0_type, c1_type, mixed_ratio)
         for i_module, t_module in zip(self.unet_image.output_blocks, self.unet_text.output_blocks):
             h = th.cat([h, hs.pop()], dim=1)
@@ -2639,7 +2639,7 @@ class UNetModel2D_Next(nn.Module):
         if self.dlayer_included:
             self.data_blocks = nn.ModuleList([])
             ResBlockDefault = partial(
-                ResBlock, 
+                ResBlock,
                 emb_channels=time_embed_dim,
                 dropout=dropout,
                 dims=2,
@@ -2653,7 +2653,7 @@ class UNetModel2D_Next(nn.Module):
         if self.clayer_included:
             self.context_blocks = nn.ModuleList([])
             CrossAttnDefault = partial(
-                SpatialTransformer, 
+                SpatialTransformer,
                 context_dim=context_dim,
                 disable_self_attn=False, )
         else:
@@ -2727,7 +2727,7 @@ class UNetModel2D_Next(nn.Module):
             if level != 0:
                 layer = Upsample(ch, conv_resample, dims=2, out_channels=ch)
                 self.add_data_layer(layer)
-                ds //= 2                
+                ds //= 2
 
         layer = nn.Sequential(
             normalization(ch),
@@ -2874,7 +2874,7 @@ class UNetModel0D_Next(UNetModel2D_Next):
         if self.clayer_included:
             self.context_blocks = nn.ModuleList([])
             CrossAttnDefault = partial(
-                SpatialTransformer, 
+                SpatialTransformer,
                 context_dim=context_dim,
                 disable_self_attn=False, )
         else:
@@ -2892,7 +2892,7 @@ class UNetModel0D_Next(UNetModel2D_Next):
         for level_idx, (mult, sdim) in enumerate(zip(channel_mult, second_dim)):
             for _ in range(self.num_noattn_blocks[level_idx]):
                 layer = FCBlockDefault(
-                    current_channel, 
+                    current_channel,
                     time_embed_dim,
                     out_channels = [mult*model_channels, sdim, 1],)
 
